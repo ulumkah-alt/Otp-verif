@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#050505">
+  <title>Verifikasi Nomor HP</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      padding: 24px; background: #050505; color: #fff;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    .panel {
+      width: min(100%, 390px); padding: 30px 24px;
+      border: 1px solid #fff; border-radius: 18px; background: #090909;
+      box-shadow: 0 12px 40px #000;
+    }
+    h1 { margin: 0 0 10px; font-size: 25px; text-align: center; }
+    .sub { color: #bbb; text-align: center; font-size: 14px; line-height: 1.5; margin: 0 0 26px; }
+    label { display: block; margin: 0 0 9px; font-size: 14px; }
+    input {
+      width: 100%; padding: 14px 13px; border: 1px solid #fff;
+      border-radius: 9px; background: #050505; color: #fff;
+      font-size: 16px; outline: none; margin-bottom: 16px;
+    }
+    input:focus { box-shadow: 0 0 0 2px #777; }
+    button {
+      width: 100%; padding: 14px; border: 1px solid #fff; border-radius: 9px;
+      background: #fff; color: #000; font-weight: 700; font-size: 15px;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .55; cursor: wait; }
+    .secondary { margin-top: 10px; background: transparent; color: #fff; }
+    #status { min-height: 22px; margin-top: 16px; text-align: center; font-size: 13px; color: #ddd; line-height: 1.5; }
+    #otp-section { display: none; }
+    #recaptcha-container { display: flex; justify-content: center; margin: 14px 0; }
+    .hint { color: #999; font-size: 12px; line-height: 1.5; margin-top: 18px; text-align: center; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <main class="panel">
+    <h1>Verifikasi Nomor HP</h1>
+    <p class="sub">Masukkan nomor ponsel untuk menerima kode verifikasi melalui SMS.</p>
+
+    <section id="phone-section">
+      <label for="phone">Nomor HP (format internasional)</label>
+      <input id="phone" type="tel" autocomplete="tel" placeholder="+6281234567890">
+      <div id="recaptcha-container"></div>
+      <button id="send-btn" type="button">Kirim Kode SMS</button>
+    </section>
+
+    <section id="otp-section">
+      <label for="otp">Kode OTP 6 digit</label>
+      <input id="otp" type="text" inputmode="numeric" autocomplete="one-time-code"
+             maxlength="6" placeholder="Masukkan 6 digit kode">
+      <button id="verify-btn" type="button">Verifikasi Kode</button>
+      <button id="back-btn" class="secondary" type="button">Ganti Nomor</button>
+    </section>
+
+    <div id="status" role="status" aria-live="polite"></div>
+    <p class="hint">Demo ini mengirim SMS sungguhan setelah konfigurasi Firebase diisi dan Phone Authentication diaktifkan.</p>
+  </main>
+
+  <script type="module">
+    // 1) Ganti nilai di bawah ini dengan konfigurasi aplikasi web Firebase milikmu.
+    // Firebase Console → Project settings → General → Your apps → SDK setup and configuration.
+    const firebaseConfig = {
+      apiKey: "AIzaSyDe3-1Q9DgJSfLjb4F2_7aH2vqUbYp8XZk",
+      authDomain: "lumxi-cbcb5.firebaseapp.com",
+      projectId: "lumxi-cbcb5",
+      storageBucket: "lumxi-cbcb5.firebasestorage.app",
+      messagingSenderId: "600627208679",
+      appId: "1:600627208679:web:eee4ccc61dc466f6a5dd42"
+    };
+
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+    import {
+      getAuth, RecaptchaVerifier, signInWithPhoneNumber
+    } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+
+    const phoneSection = document.getElementById("phone-section");
+    const otpSection = document.getElementById("otp-section");
+    const phoneInput = document.getElementById("phone");
+    const otpInput = document.getElementById("otp");
+    const sendBtn = document.getElementById("send-btn");
+    const verifyBtn = document.getElementById("verify-btn");
+    const backBtn = document.getElementById("back-btn");
+    const statusBox = document.getElementById("status");
+
+    let auth;
+    let confirmationResult = null;
+    let recaptchaVerifier = null;
+
+    function status(message, isError = false) {
+      statusBox.textContent = message;
+      statusBox.style.color = isError ? "#ff8b8b" : "#ddd";
+    }
+
+    function configIsReady() {
+      return Object.values(firebaseConfig).every(value =>
+        typeof value === "string" && value.trim() &&
+        !value.startsWith("ISI_")
+      );
+    }
+
+    if (configIsReady()) {
+      const app = initializeApp(firebaseConfig);
+      auth = getAuth(app);
+    } else {
+      status("Isi konfigurasi Firebase terlebih dahulu agar SMS dapat dikirim.", true);
+      sendBtn.disabled = true;
+    }
+
+    function createRecaptcha() {
+      if (recaptchaVerifier) {
+        try { recaptchaVerifier.clear(); } catch (_) {}
+      }
+      recaptchaVerifier = new RecaptchaVerifier(auth, "recaptcha-container", {
+        size: "normal",
+        callback: () => status("Pemeriksaan keamanan berhasil. Tekan Kirim Kode SMS."),
+        "expired-callback": () => status("reCAPTCHA kedaluwarsa. Silakan centang ulang.", true)
+      });
+      return recaptchaVerifier.render();
+    }
+
+    sendBtn.addEventListener("click", async () => {
+      const phone = phoneInput.value.trim().replace(/[()\s-]/g, "");
+      if (!/^\+[1-9]\d{7,14}$/.test(phone)) {
+        status("Gunakan format internasional, contoh: +6281234567890.", true);
+        return;
+      }
+      sendBtn.disabled = true;
+      status("Menyiapkan verifikasi keamanan...");
+      try {
+        await createRecaptcha();
+        status("Mengirim SMS OTP...");
+        confirmationResult = await signInWithPhoneNumber(auth, phone, recaptchaVerifier);
+        phoneSection.style.display = "none";
+        otpSection.style.display = "block";
+        status("Kode SMS sudah diminta. Periksa pesan di ponselmu.");
+        otpInput.focus();
+      } catch (error) {
+        console.error(error);
+        status("Gagal mengirim SMS: " + (error.message || error.code || "Coba lagi."), true);
+        try { if (recaptchaVerifier) recaptchaVerifier.clear(); } catch (_) {}
+        recaptchaVerifier = null;
+        document.getElementById("recaptcha-container").innerHTML = "";
+      } finally {
+        sendBtn.disabled = false;
+      }
+    });
+
+    verifyBtn.addEventListener("click", async () => {
+      const code = otpInput.value.trim();
+      if (!/^\d{6}$/.test(code)) {
+        status("Masukkan kode OTP 6 digit.", true);
+        return;
+      }
+      verifyBtn.disabled = true;
+      status("Memeriksa kode...");
+      try {
+        const result = await confirmationResult.confirm(code);
+        status("Nomor berhasil diverifikasi. UID akun: " + result.user.uid);
+        otpInput.disabled = true;
+        verifyBtn.classList.add("hidden");
+        backBtn.classList.add("hidden");
+      } catch (error) {
+        console.error(error);
+        status("Kode salah atau kedaluwarsa. Periksa kode lalu coba lagi.", true);
+      } finally {
+        verifyBtn.disabled = false;
+      }
+    });
+
+    backBtn.addEventListener("click", () => {
+      confirmationResult = null;
+      otpInput.value = "";
+      phoneSection.style.display = "block";
+      otpSection.style.display = "none";
+      status("Masukkan nomor yang benar, lalu kirim ulang kode.");
+      try { if (recaptchaVerifier) recaptchaVerifier.clear(); } catch (_) {}
+      recaptchaVerifier = null;
+      document.getElementById("recaptcha-container").innerHTML = "";
+    });
+  </script>
+</body>
+</html>
